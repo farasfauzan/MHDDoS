@@ -1,0 +1,7 @@
+
+=== 2026-05-31T16:42:27.884726 UTC ===
+Traceback (most recent call last):
+  File "/Users/narwanpratanta/MHDDoS/gui.py", line 5252, in log_message
+    if r.status_code == 200:
+    
+KeyboardInterrupt

